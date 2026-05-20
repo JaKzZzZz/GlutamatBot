@@ -1,4 +1,5 @@
 **/.venv
 **/temp
+**/.idea
 *.env
 *.sql
