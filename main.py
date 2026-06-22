@@ -783,17 +783,15 @@ async def remove_channel_selected(callback: CallbackQuery):
 
 # Run the bot
 async def main() -> None:
-    session = AiohttpSession()
-    bot_session = Bot(token=TOKEN, session=session)
+    bot_session = Bot(token=TOKEN)
     await init_db()
     channels = await requests_db.get_channels()
     asyncio.create_task(hourly_sender(bot_session))
 
-    if channels:
-        try:
-            await dp.start_polling(bot_session)
-        finally:
-            await bot_session.session.close()
+    try:
+        await dp.start_polling(bot_session)
+    finally:
+        await bot_session.session.close()
 
 
 if __name__ == "__main__":
