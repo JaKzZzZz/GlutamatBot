@@ -21,7 +21,6 @@ from forms.channel import AddForm, EditTags, PostActionChoose
 
 load_dotenv()
 TOKEN = getenv("BOT_TOKEN")
-PROXY = getenv("PROXY_URL")
 
 ALLOWED_IDS = [
     int(x) for x in getenv("ALLOWED_IDS", "").split(",")
@@ -784,7 +783,7 @@ async def remove_channel_selected(callback: CallbackQuery):
 
 # Run the bot
 async def main() -> None:
-    session = AiohttpSession(proxy=PROXY)
+    session = AiohttpSession()
     bot_session = Bot(token=TOKEN, session=session)
     await init_db()
     channels = await requests_db.get_channels()
