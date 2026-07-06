@@ -17,10 +17,12 @@ from aiogram.fsm.context import FSMContext
 import keyboards
 from db import requests_db, functions_db
 from db.init_db import DB_NAME, init_db
-from forms.channel import AddForm, EditTags, PostActionChoose
+from db.requests_db import get_delay, get_next_channel, get_next_post, get_channels
+from forms.channel import AddForm, EditTags, PostActionChoose, AddDelay
 
 load_dotenv()
 TOKEN = getenv("BOT_TOKEN")
+CAPTION = getenv("CAPTION")
 
 ALLOWED_IDS = [
     int(x) for x in getenv("ALLOWED_IDS", "").split(",")
@@ -31,9 +33,10 @@ router = Router()
 dp.include_router(router)
 
 async def hourly_sender(bot_session):
+    delay = await get_delay()
+    sec_delay = delay * 60
     while True:
-        delay = random.randint(40, 90)
-        await asyncio.sleep(delay)
+        await asyncio.sleep(sec_delay + random.randint(0, sec_delay // 4))
 
         status = await requests_db.get_bot_status()
         if not status:
@@ -55,11 +58,11 @@ async def hourly_sender(bot_session):
                     if not posts:
                         continue
 
-                    file_id, file, _ = posts[0]
+                    file_id, file, _, artist_name = posts[0]
 
                     if await requests_db.is_channel_active(channel_id):
                         try:
-                            await send_message(bot_session, channel_id, file_id, file)
+                            await send_message(bot_session, channel_id, file_id, file, artist_name)
                         except Exception as e:
                             print(e)
 
@@ -67,8 +70,18 @@ async def hourly_sender(bot_session):
                     print(f"Ошибка отправки в канале {channel_id}: {e}")
 
 
-async def send_message(bot_session, channel_id, file_id, file):
-    await bot_session.send_photo(chat_id=channel_id, photo=file)
+async def send_message(bot_session, channel_id, file_id, file, artist_name):
+
+    caption = (
+        "🌙 <b>The Way | New Post</b> ✨️\n"
+        "━━━━━━━━━━━━━━\n"
+        f"✦ <b>Artist:</b> {artist_name}\n"
+        f'✦ <b>Source:</b> <a href="https://e621.net/posts/{file_id}">e621 Post</a>\n'
+        "━━━━━━━━━━━━━━\n"
+        f'<a href="{CAPTION}">Follow The Way 🖤</a>'
+    )
+
+    await bot_session.send_photo(chat_id=channel_id, photo=file, caption=caption, parse_mode="HTML")
 
     sleep_delay = random.randint(10, 30)
 
@@ -79,6 +92,19 @@ async def send_message(bot_session, channel_id, file_id, file):
 
     except Exception as e:
         print(f"Ошибка удаления арта из БД: {e}")
+
+async def get_next_global_post(current_channel_id):
+    start = current_channel_id
+
+    while True:
+        current_channel_id = await get_next_channel(current_channel_id)
+
+        post = await get_next_post(current_channel_id)
+        if post:
+            return post
+
+        if current_channel_id == start:
+            return None
 
 
 async def auto_refill_query(bot_session, channel_id):
@@ -108,7 +134,7 @@ async def auto_refill_query(bot_session, channel_id):
 
 
 def tags_to_query(tags) -> str:
-    return "+".join(tags.split())
+    return " ".join(tags.split())
 
 
 @router.message(F.text.lower() == "стоп/старт")
@@ -253,33 +279,54 @@ async def handle_posts_downloading_nonfilter(message: Message, state: FSMContext
             return
 
         posts_count = await requests_db.get_posts_count(channel_id)
-        await message.answer(f"Успешная загрузка данных. Кол-во нефильтрованных постов: {posts_count}")
+        await message.answer(f"Успешная загрузка данных в {channel_id}. Кол-во нефильтрованных постов: {posts_count}")
 
     except Exception as e:
         await message.answer("Возникла ошибка при загрузке данных. Возможно, не заданы тэги?")
         print(e)
         return
 
-
 @router.message(PostActionChoose.choosing_action,
                 F.text.lower() == "отбор постов вручную")
-async def handle_moderate_posts(message: Message, state: FSMContext):
+async def handle_moderate_posts(message: Message, state: FSMContext, bot: Bot):
     if message.from_user.id not in ALLOWED_IDS:
         return
     data = await state.get_data()
     channel_id = data.get("channel_id")
-    post = await requests_db.get_next_post(channel_id)
+    chat = await bot.get_chat(channel_id)
+    post = await get_next_global_post(channel_id)
+    channel_name = chat.title
 
     if not post:
-        await message.answer("Очередь пуста")
-        await state.clear()
-        return
 
-    file_id, file, tags = post
+        await message.answer("Очередь закончилась")
+
+        channels = await get_channels()
+
+        for channel_name, channel_id in channels:
+
+            try:
+                loaded_count = await functions_db.fetch_and_save_posts(channel_id)
+
+                if loaded_count == 0:
+                    await message.answer("По этим тегам ничего не найдено")
+                    return
+
+                posts_count = await requests_db.get_posts_count(channel_id)
+                await message.answer(
+                    f"Успешная загрузка данных в {channel_id}. Кол-во нефильтрованных постов: {posts_count}")
+                return
+
+            except Exception as e:
+                await message.answer("Возникла ошибка при загрузке данных. Возможно, не заданы тэги?")
+                print(e)
+                return
+
+    file_id, file, tags, channel_id = post
 
     await message.answer_photo(
         photo=file,
-        caption=tags,
+        caption=f"Канал: {channel_name}",
         reply_markup=keyboards.post_keyboard(file_id)
     )
 
@@ -379,11 +426,11 @@ async def show_queue_post(message: Message, state: FSMContext):
         await message.answer("Очередь пуста")
         return
 
-    file_id, file, tags = posts[index]
+    file_id, file, tags, artist_name = posts[index]
 
     caption = tags or ""
-    if len(caption) > 1024:
-        caption = caption[:1021] + "..."
+    if len(caption) > 1010:
+        caption = caption[:1000] + "..."
 
     try:
         await message.answer_photo(
@@ -411,11 +458,11 @@ async def navigate_queue(callback: CallbackQuery, state: FSMContext):
 
     await state.update_data(index=index)
 
-    file_id, file, tags = posts[index]
+    file_id, file, tags, artist_name = posts[index]
 
     caption = tags or ""
-    if len(caption) > 1024:
-        caption = caption[:1021] + "..."
+    if len(caption) > 1010:
+        caption = caption[:1000] + "..."
 
     try:
         await callback.message.edit_media(
@@ -462,7 +509,7 @@ async def delete_from_queue(callback: CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith(("approve:", "reject:")))
-async def handle_moderation(callback: CallbackQuery):
+async def handle_moderation(callback: CallbackQuery, bot: Bot):
     action, file_id = callback.data.split(":")
 
     async with aiosqlite.connect(DB_NAME) as db:
@@ -494,32 +541,50 @@ async def handle_moderation(callback: CallbackQuery):
             await callback.answer("Ошибка при изменении статуса арта в  БД")
             print(e)
 
-    post = await requests_db.get_next_post(channel_id)
+    post = await get_next_global_post(channel_id)
 
     if not post:
-        try:
-            await callback.message.bot.delete_message(
-                chat_id=callback.message.chat.id,
-                message_id=callback.message.message_id
-            )
-        except Exception as e:
-            print("Ошибка удаления:", e)
 
-        await callback.message.answer("Очередь закончилась")
-        return
+        await callback.answer("Очередь закончилась. Загрузка...")
 
-    new_query_id, file, tags = post
+        channels = await get_channels()
+
+        for channel_name, channel_id in channels:
+
+            try:
+                loaded_count = await functions_db.fetch_and_save_posts(channel_id)
+
+                if loaded_count == 0:
+                    await callback.answer("По этим тегам ничего не найдено")
+                    return
+
+                posts_count = await requests_db.get_posts_count(channel_id)
+                await callback.answer(
+                    f"Успешная загрузка данных")
+
+
+            except Exception as e:
+                await callback.answer("Возникла ошибка при загрузке данных. Возможно, не заданы тэги?")
+                print(e)
+                return
+
+        post = await get_next_global_post(channel_id)
+
+    new_query_id, file, tags, channel_id = post
+
+    chat = await bot.get_chat(channel_id)
+    title = chat.title
 
     caption = tags or ""
 
-    if len(caption) >= 1024:
-        caption = caption[:1024 - 3] + "..."
+    if len(caption) >= 1010:
+        caption = caption[:1000 - 3] + "..."
 
     try:
         await callback.message.edit_media(
             media=InputMediaPhoto(
                 media=file,
-                caption=caption
+                caption=f"Канал: {title}"
             ),
             reply_markup=keyboards.post_keyboard(new_query_id)
         )
@@ -611,6 +676,7 @@ async def channel_selected(callback: CallbackQuery):
 async def delete_tags_start(callback: CallbackQuery):
     chat_id = callback.data.split(":")[1]
     await requests_db.delete_channel_tags(chat_id)
+    await requests_db.update_last_post_id(None, chat_id)
 
     await callback.message.edit_text(
         f"Тэги для канала {chat_id}\n удалены"
@@ -660,6 +726,7 @@ async def process_new_tag(message: Message, state: FSMContext):
 
     try:
         await requests_db.insert_channel_tags(tags, chat_id)
+        await requests_db.update_last_post_id(None, chat_id)
 
         await message.answer(f"Для канала '{chat_id}' теперь используются тэги: \n'{tags}'")
 
@@ -741,6 +808,32 @@ async def process_addchannel(message: Message, state: FSMContext, bot: Bot):
     except Exception as e:
         await message.answer("Ошибка при добавлении канала")
 
+@router.message(F.text.lower() == "установить задержку")
+async def command_setdelay_handler(message: Message, state: FSMContext):
+    if message.from_user.id not in ALLOWED_IDS:
+        return
+    await message.answer("Введите время задержки (в минутах):")
+    await state.set_state(AddDelay.channel_id)
+
+
+@router.message(AddDelay.channel_id, F.text)
+async def process_setdelay(message: Message, state: FSMContext):
+    if message.from_user.id not in ALLOWED_IDS:
+        return
+
+    if not message.text.isdigit():
+        await message.answer("Введите число (в минутах).")
+        return
+
+    delay = int(message.text)
+
+    try:
+        await requests_db.set_delay(delay)
+        await message.answer("Задержка успешно изменена.")
+    except Exception as e:
+        await message.answer("Ошибка при изменении задержки.")
+
+    await state.clear()
 
 @router.message(Command("removechannel"))
 @router.message(F.text.lower() == "удалить канал")
@@ -785,7 +878,6 @@ async def remove_channel_selected(callback: CallbackQuery):
 async def main() -> None:
     bot_session = Bot(token=TOKEN)
     await init_db()
-    channels = await requests_db.get_channels()
     asyncio.create_task(hourly_sender(bot_session))
 
     try:

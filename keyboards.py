@@ -6,7 +6,8 @@ def get_main_reply_keyboard():
         keyboard=[
             [KeyboardButton(text="Посты"),
              KeyboardButton(text="Управление каналами")],
-            [KeyboardButton(text="Стоп/Старт")]
+            [KeyboardButton(text="Стоп/Старт")],
+            [KeyboardButton(text="Установить задержку")]
         ],
         resize_keyboard=True
     )

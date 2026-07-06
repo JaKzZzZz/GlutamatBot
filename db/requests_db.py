@@ -3,10 +3,10 @@ import aiosqlite
 from db.init_db import DB_NAME
 
 
-async def save_posts_in_nonfilter(channel_id, post_id, tags_str, file_url):
+async def save_posts_in_nonfilter(channel_id, post_id, tags_str, file_url, artist_name):
     async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("""INSERT OR IGNORE INTO nonfilter (channel_id, file_id, tags, file) 
-        VALUES (?, ?, ?, ?); """, (channel_id, post_id, tags_str, file_url))
+        await db.execute("""INSERT OR IGNORE INTO nonfilter (channel_id, file_id, tags, file, artist_name) 
+        VALUES (?, ?, ?, ?, ?); """, (channel_id, post_id, tags_str, file_url, artist_name))
         await db.commit()
 
 
@@ -206,14 +206,41 @@ async def delete_query_post(file_id):
 async def get_next_post(channel_id):
     async with aiosqlite.connect(DB_NAME) as db:
         result = await db.execute("""
-        SELECT file_id, file, tags
+        SELECT file_id, file, tags, channel_id
         FROM nonfilter
         WHERE status = 'pending' and channel_id = ?
         ORDER BY file_id
-        LIMIT 1
+        LIMIT 1 
     """, (channel_id,))
         result_post = await result.fetchone()
         return result_post
+
+async def get_next_channel(current_channel_id):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("""
+            SELECT id, channel_id
+            FROM channels
+            WHERE id > (
+                SELECT id
+                FROM channels
+                WHERE channel_id = ?
+            )
+            ORDER BY id
+            LIMIT 1
+        """, (current_channel_id,))
+
+        channel = await cursor.fetchone()
+
+        if channel is None:
+            cursor = await db.execute("""
+                SELECT id, channel_id
+                FROM channels
+                ORDER BY id
+                LIMIT 1
+            """)
+            channel = await cursor.fetchone()
+
+        return channel[1]
 
 
 async def get_posts(channel_id):
@@ -230,9 +257,70 @@ async def get_posts(channel_id):
 async def get_all_query_posts(channel_id):
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute("""
-            SELECT q.file_id, n.file, n.tags
+            SELECT q.file_id, n.file, n.tags, n.artist_name
             FROM query q
             JOIN nonfilter n ON q.file_id = n.file_id
             WHERE q.channel_id = ?
         """, (channel_id,))
         return await cursor.fetchall()
+
+async def update_last_post_id(last_post_id, channel_id):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("""
+            UPDATE channels SET last_post_id = ? WHERE channel_id = ?
+        """, (last_post_id, channel_id))
+        await db.commit()
+
+
+async def get_last_post_id(channel_id):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("""
+            SELECT c.last_post_id
+            FROM channels c
+            WHERE c.channel_id = ?
+        """, (channel_id,))
+        result = await cursor.fetchone()
+        if result is None:
+            return None
+
+        return result[0]
+
+async def get_delay():
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("""
+        SELECT s.delay
+        FROM settings s
+        """)
+        result = await cursor.fetchone()
+        return result[0]
+
+async def set_delay(delay):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("""
+        UPDATE settings SET delay = ?
+        """, (delay,))
+        await db.commit()
+        return
+
+async def get_next_id_channel(current_id):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("""
+            SELECT id, channel_id
+            FROM channels
+            WHERE id > ?
+            ORDER BY id
+            LIMIT 1
+        """, (current_id,))
+
+        next_channel = await cursor.fetchone()
+
+        if next_channel is None:
+            cursor_exc = await db.execute("""
+                SELECT id, channel_id
+                FROM channels
+                ORDER BY id
+                LIMIT 1
+            """)
+            next_channel = await cursor_exc.fetchone()
+
+        return next_channel[0]

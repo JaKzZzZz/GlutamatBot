@@ -11,3 +11,6 @@ class EditTags(StatesGroup):
 class PostActionChoose(StatesGroup):
     choosing_action = State()
     waiting_confirmation = State()
+
+class AddDelay(StatesGroup):
+    channel_id = State()
