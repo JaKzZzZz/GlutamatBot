@@ -19,6 +19,7 @@ from db import requests_db, functions_db
 from db.init_db import DB_NAME, init_db
 from db.requests_db import get_delay, get_next_channel, get_next_post, get_channels
 from forms.channel import AddForm, EditTags, PostActionChoose, AddDelay
+from http_client import create_session, close_session
 
 load_dotenv()
 TOKEN = getenv("BOT_TOKEN")
@@ -879,11 +880,13 @@ async def main() -> None:
     bot_session = Bot(token=TOKEN)
     await init_db()
     asyncio.create_task(hourly_sender(bot_session))
+    await create_session()
 
     try:
         await dp.start_polling(bot_session)
     finally:
         await bot_session.session.close()
+        await close_session()
 
 
 if __name__ == "__main__":
