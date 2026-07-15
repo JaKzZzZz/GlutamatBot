@@ -33,6 +33,8 @@ dp = Dispatcher()
 router = Router()
 dp.include_router(router)
 
+fetch_lock = asyncio.Lock()
+
 async def hourly_sender(bot_session):
     delay = await get_delay()
     sec_delay = delay * 60
@@ -292,42 +294,67 @@ async def handle_posts_downloading_nonfilter(message: Message, state: FSMContext
 async def handle_moderate_posts(message: Message, state: FSMContext, bot: Bot):
     if message.from_user.id not in ALLOWED_IDS:
         return
+
     data = await state.get_data()
-    channel_id = data.get("channel_id")
-    chat = await bot.get_chat(channel_id)
-    post = await get_next_global_post(channel_id)
-    channel_name = chat.title
+    current_channel_id = data.get("channel_id")
+
+    post = await get_next_global_post(current_channel_id)
 
     if not post:
 
-        await message.answer("Очередь закончилась")
+        async with fetch_lock:
 
-        channels = await get_channels()
+            post = await get_next_global_post(current_channel_id)
+            if not post:
 
-        for channel_name, channel_id in channels:
-
-            try:
-                loaded_count = await functions_db.fetch_and_save_posts(channel_id)
-
-                if loaded_count == 0:
-                    await message.answer("По этим тегам ничего не найдено")
-                    return
-
-                posts_count = await requests_db.get_posts_count(channel_id)
                 await message.answer(
-                    f"Успешная загрузка данных в {channel_id}. Кол-во нефильтрованных постов: {posts_count}")
-                return
+                    "Очередь закончилась. Загружаю новые посты..."
+                )
 
-            except Exception as e:
-                await message.answer("Возникла ошибка при загрузке данных. Возможно, не заданы тэги?")
-                print(e)
-                return
+                channels = await get_channels()
+                results = []
+
+                for channel_name, channel_id in channels:
+                    try:
+                        loaded_count = await functions_db.fetch_and_save_posts(channel_id)
+
+                        if loaded_count == 0:
+                            results.append(
+                                f"{channel_name}: новых постов не найдено"
+                            )
+                            continue
+
+                        posts_count = await requests_db.get_posts_count(channel_id)
+
+                        results.append(
+                            f"{channel_name}: загружено, в очереди {posts_count} постов"
+                        )
+
+                    except Exception as e:
+                        print(e)
+                        results.append(
+                            f"{channel_name}: ошибка загрузки"
+                        )
+
+                await message.answer(
+                    "Обновление завершено:\n\n" + "\n".join(results)
+                )
+
+            post = await get_next_global_post(current_channel_id)
+
+        if not post:
+            await message.answer(
+                "Во всех каналах отсутствуют новые посты."
+            )
+            return
 
     file_id, file, tags, channel_id = post
 
+    chat = await bot.get_chat(channel_id)
+
     await message.answer_photo(
         photo=file,
-        caption=f"Канал: {channel_name}",
+        caption=f"Канал: {chat.title}",
         reply_markup=keyboards.post_keyboard(file_id)
     )
 
@@ -546,40 +573,36 @@ async def handle_moderation(callback: CallbackQuery, bot: Bot):
 
     if not post:
 
-        await callback.answer("Очередь закончилась. Загрузка...")
+        async with fetch_lock:
 
-        channels = await get_channels()
+            post = await get_next_global_post(channel_id)
 
-        for channel_name, channel_id in channels:
+            if not post:
 
-            try:
-                loaded_count = await functions_db.fetch_and_save_posts(channel_id)
+                await callback.answer("Очередь закончилась. Загрузка...")
 
-                if loaded_count == 0:
-                    await callback.answer("По этим тегам ничего не найдено")
-                    return
+                channels = await get_channels()
 
-                posts_count = await requests_db.get_posts_count(channel_id)
-                await callback.answer(
-                    f"Успешная загрузка данных")
+                for _, current_channel_id in channels:
+                    try:
+                        await functions_db.fetch_and_save_posts(current_channel_id)
 
+                    except Exception as e:
+                        print(e)
 
-            except Exception as e:
-                await callback.answer("Возникла ошибка при загрузке данных. Возможно, не заданы тэги?")
-                print(e)
-                return
+                post = await get_next_global_post(channel_id)
 
-        post = await get_next_global_post(channel_id)
+        if not post:
+            await callback.answer(
+                "Во всех каналах отсутствуют новые посты",
+                show_alert=True
+            )
+            return
 
     new_query_id, file, tags, channel_id = post
 
     chat = await bot.get_chat(channel_id)
     title = chat.title
-
-    caption = tags or ""
-
-    if len(caption) >= 1010:
-        caption = caption[:1000 - 3] + "..."
 
     try:
         await callback.message.edit_media(

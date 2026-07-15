@@ -16,6 +16,7 @@ async def query_approve_post(file_id, channel_id):
                             UPDATE nonfilter 
                             SET status = 'sent' 
                             WHERE file_id = ?
+                            AND status = 'processing'
                         """, (file_id,))
         await db.execute("""
             INSERT INTO query (file_id, channel_id)
@@ -30,6 +31,7 @@ async def query_reject_post(file_id):
         UPDATE nonfilter 
         SET status = 'sent'
         WHERE file_id = ?
+        AND status = 'processing'
     """, (file_id,))
         await db.commit()
 
@@ -205,15 +207,26 @@ async def delete_query_post(file_id):
 
 async def get_next_post(channel_id):
     async with aiosqlite.connect(DB_NAME) as db:
-        result = await db.execute("""
-        SELECT file_id, file, tags, channel_id
-        FROM nonfilter
-        WHERE status = 'pending' and channel_id = ?
-        ORDER BY file_id
-        LIMIT 1 
-    """, (channel_id,))
-        result_post = await result.fetchone()
-        return result_post
+
+        cursor = await db.execute("""
+            UPDATE nonfilter
+            SET status = 'processing'
+            WHERE file_id = (
+                SELECT file_id
+                FROM nonfilter
+                WHERE status = 'pending'
+                  AND channel_id = ?
+                ORDER BY file_id
+                LIMIT 1
+            )
+            RETURNING file_id, file, tags, channel_id
+        """, (channel_id,))
+
+        post = await cursor.fetchone()
+
+        await db.commit()
+
+        return post
 
 async def get_next_channel(current_channel_id):
     async with aiosqlite.connect(DB_NAME) as db:
