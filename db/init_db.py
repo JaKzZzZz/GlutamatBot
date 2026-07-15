@@ -11,7 +11,8 @@ async def init_db():
         file VARCHAR(255) NOT NULL,
         tags VARCHAR(1024) NOT NULL,
         status TEXT DEFAULT 'pending', -- pending / sent 
-        channel_id VARCHAR(255)
+        channel_id VARCHAR(255),
+        processing_at INTEGER DEFAULT NULL
         );
         CREATE TABLE IF NOT EXISTS query (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

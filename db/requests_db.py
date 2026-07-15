@@ -210,7 +210,8 @@ async def get_next_post(channel_id):
 
         cursor = await db.execute("""
             UPDATE nonfilter
-            SET status = 'processing'
+            SET status = 'processing',
+            processing_at=CURRENT_TIMESTAMP
             WHERE file_id = (
                 SELECT file_id
                 FROM nonfilter
@@ -227,6 +228,17 @@ async def get_next_post(channel_id):
         await db.commit()
 
         return post
+
+async def reload_processing_posts():
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("""
+                    UPDATE nonfilter
+            SET status='pending'
+            WHERE
+                status='processing'
+                AND processing_at < datetime('now', '-15 minutes');
+        """)
+
 
 async def get_next_channel(current_channel_id):
     async with aiosqlite.connect(DB_NAME) as db:

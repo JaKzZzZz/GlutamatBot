@@ -35,6 +35,11 @@ dp.include_router(router)
 
 fetch_lock = asyncio.Lock()
 
+async def processing_watcher():
+    while True:
+        await requests_db.reload_processing_posts()
+        await asyncio.sleep(300)
+
 async def hourly_sender(bot_session):
     delay = await get_delay()
     sec_delay = delay * 60
@@ -903,6 +908,7 @@ async def main() -> None:
     bot_session = Bot(token=TOKEN)
     await init_db()
     asyncio.create_task(hourly_sender(bot_session))
+    asyncio.create_task(processing_watcher())
     await create_session()
 
     try:
