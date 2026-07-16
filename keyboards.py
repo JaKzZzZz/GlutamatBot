@@ -27,12 +27,12 @@ def get_channels_reply_keyboard():
     return keyboard
 
 
-def post_keyboard(file_id: int):
+def post_keyboard(file_id: int, channel_id: str):
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="✅", callback_data=f"approve:{file_id}"),
-                InlineKeyboardButton(text="❌", callback_data=f"reject:{file_id}")
+                InlineKeyboardButton(text="✅", callback_data=f"approve:{file_id}:{channel_id}"),
+                InlineKeyboardButton(text="❌", callback_data=f"reject:{file_id}:{channel_id}")
             ]
         ]
     )

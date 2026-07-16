@@ -6,13 +6,14 @@ async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
         await db.executescript("""
         CREATE TABLE IF NOT EXISTS nonfilter (
-        file_id INTEGER PRIMARY KEY,
+        n_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        file_id INTEGER,
         artist_name VARCHAR(255),
         file VARCHAR(255) NOT NULL,
         tags VARCHAR(1024) NOT NULL,
         status TEXT DEFAULT 'pending', -- pending / sent 
         channel_id VARCHAR(255),
-        processing_at INTEGER DEFAULT NULL
+        UNIQUE (file_id, channel_id)
         );
         CREATE TABLE IF NOT EXISTS query (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

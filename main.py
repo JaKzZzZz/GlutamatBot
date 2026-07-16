@@ -33,13 +33,6 @@ dp = Dispatcher()
 router = Router()
 dp.include_router(router)
 
-fetch_lock = asyncio.Lock()
-
-async def processing_watcher():
-    while True:
-        await requests_db.reload_processing_posts()
-        await asyncio.sleep(300)
-
 async def hourly_sender(bot_session):
     delay = await get_delay()
     sec_delay = delay * 60
@@ -299,68 +292,48 @@ async def handle_posts_downloading_nonfilter(message: Message, state: FSMContext
 async def handle_moderate_posts(message: Message, state: FSMContext, bot: Bot):
     if message.from_user.id not in ALLOWED_IDS:
         return
-
     data = await state.get_data()
-    current_channel_id = data.get("channel_id")
-
-    post = await get_next_global_post(current_channel_id)
+    start_channel_id = data.get("channel_id")
+    chat = await bot.get_chat(start_channel_id)
+    post = await get_next_global_post(start_channel_id)
+    channel_name = chat.title
 
     if not post:
 
-        async with fetch_lock:
+        await message.answer("Очередь закончилась")
 
-            post = await get_next_global_post(current_channel_id)
-            if not post:
+        channels = await get_channels()
+        results = []
 
-                await message.answer(
-                    "Очередь закончилась. Загружаю новые посты..."
+        for c_n, c_id in channels:
+
+            try:
+                await functions_db.fetch_and_save_posts(c_id)
+
+                posts_count = await requests_db.get_posts_count(c_id)
+
+                results.append(
+                    f"• {c_n}: всего в очереди {posts_count}"
                 )
 
-                channels = await get_channels()
-                results = []
+            except Exception as e:
+                await message.answer("Возникла ошибка при загрузке данных. Возможно, не заданы тэги?")
+                print(e)
+                return
 
-                for channel_name, channel_id in channels:
-                    try:
-                        loaded_count = await functions_db.fetch_and_save_posts(channel_id)
+        await message.answer(
+            "Загрузка завершена.\n\n" + "\n".join(results))
 
-                        if loaded_count == 0:
-                            results.append(
-                                f"{channel_name}: новых постов не найдено"
-                            )
-                            continue
 
-                        posts_count = await requests_db.get_posts_count(channel_id)
+    file_id, file, tags, post_channel_id = post
 
-                        results.append(
-                            f"{channel_name}: загружено, в очереди {posts_count} постов"
-                        )
-
-                    except Exception as e:
-                        print(e)
-                        results.append(
-                            f"{channel_name}: ошибка загрузки"
-                        )
-
-                await message.answer(
-                    "Обновление завершено:\n\n" + "\n".join(results)
-                )
-
-            post = await get_next_global_post(current_channel_id)
-
-        if not post:
-            await message.answer(
-                "Во всех каналах отсутствуют новые посты."
-            )
-            return
-
-    file_id, file, tags, channel_id = post
-
-    chat = await bot.get_chat(channel_id)
+    post_chat = await bot.get_chat(post_channel_id)
+    post_channel_name = post_chat.title
 
     await message.answer_photo(
         photo=file,
-        caption=f"Канал: {chat.title}",
-        reply_markup=keyboards.post_keyboard(file_id)
+        caption=f"Канал: {post_channel_name}",
+        reply_markup=keyboards.post_keyboard(file_id, post_channel_id)
     )
 
 
@@ -543,24 +516,11 @@ async def delete_from_queue(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith(("approve:", "reject:")))
 async def handle_moderation(callback: CallbackQuery, bot: Bot):
-    action, file_id = callback.data.split(":")
-
-    async with aiosqlite.connect(DB_NAME) as db:
-
-        row = await db.execute("""
-        SELECT channel_id FROM nonfilter WHERE file_id = ? LIMIT 1
-    """, (file_id,))
-
-        channel_id = await row.fetchone()
-        channel_id = channel_id[0]
-
-    if not row:
-        await callback.answer("Ошибка")
-        return
+    action, file_id, start_channel_id = callback.data.split(":")
 
     if action == "approve":
         try:
-            await requests_db.query_approve_post(file_id, channel_id)
+            await requests_db.query_approve_post(file_id, start_channel_id)
 
         except Exception as e:
             await callback.answer("Ошибка при занесении арта в очередь в БД")
@@ -568,46 +528,52 @@ async def handle_moderation(callback: CallbackQuery, bot: Bot):
 
     if action == "reject":
         try:
-            await requests_db.query_reject_post(file_id)
+            await requests_db.query_reject_post(file_id, start_channel_id)
 
         except Exception as e:
             await callback.answer("Ошибка при изменении статуса арта в  БД")
             print(e)
 
-    post = await get_next_global_post(channel_id)
+    post = await get_next_global_post(start_channel_id)
 
     if not post:
 
-        async with fetch_lock:
+        await callback.answer("Очередь закончилась. Загрузка...")
 
-            post = await get_next_global_post(channel_id)
+        channels = await get_channels()
 
-            if not post:
+        for channel_name, channel_id in channels:
 
-                await callback.answer("Очередь закончилась. Загрузка...")
+            try:
+                loaded_count = await functions_db.fetch_and_save_posts(channel_id)
 
-                channels = await get_channels()
+                if loaded_count == 0:
+                    await callback.answer("По этим тегам ничего не найдено")
+                    return
 
-                for _, current_channel_id in channels:
-                    try:
-                        await functions_db.fetch_and_save_posts(current_channel_id)
+                posts_count = await requests_db.get_posts_count(channel_id)
+                await callback.answer(
+                    f"Успешная загрузка данных")
 
-                    except Exception as e:
-                        print(e)
 
-                post = await get_next_global_post(channel_id)
+            except Exception as e:
+                await callback.answer("Возникла ошибка при загрузке данных. Возможно, не заданы тэги?")
+                print(e)
+                return
 
-        if not post:
-            await callback.answer(
-                "Во всех каналах отсутствуют новые посты",
-                show_alert=True
-            )
-            return
+        post = await get_next_global_post(start_channel_id)
 
-    new_query_id, file, tags, channel_id = post
+    new_query_id, file, tags, post_channel_id = post
 
-    chat = await bot.get_chat(channel_id)
+    print(post_channel_id)
+
+    chat = await bot.get_chat(post_channel_id)
     title = chat.title
+
+    caption = tags or ""
+
+    if len(caption) >= 1010:
+        caption = caption[:1000 - 3] + "..."
 
     try:
         await callback.message.edit_media(
@@ -615,7 +581,7 @@ async def handle_moderation(callback: CallbackQuery, bot: Bot):
                 media=file,
                 caption=f"Канал: {title}"
             ),
-            reply_markup=keyboards.post_keyboard(new_query_id)
+            reply_markup=keyboards.post_keyboard(new_query_id, post_channel_id)
         )
 
     except TelegramBadRequest:
@@ -908,7 +874,6 @@ async def main() -> None:
     bot_session = Bot(token=TOKEN)
     await init_db()
     asyncio.create_task(hourly_sender(bot_session))
-    asyncio.create_task(processing_watcher())
     await create_session()
 
     try:
