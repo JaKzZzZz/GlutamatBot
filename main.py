@@ -35,7 +35,7 @@ dp.include_router(router)
 
 loading_lock = asyncio.Lock()
 
-sender_task = None
+sender_task: asyncio.Task | None = None
 bot_session = Bot(token=TOKEN)
 
 async def hourly_sender(bot_session):
