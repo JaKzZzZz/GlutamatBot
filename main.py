@@ -35,6 +35,9 @@ dp.include_router(router)
 
 loading_lock = asyncio.Lock()
 
+sender_task = None
+bot_session = Bot(token=TOKEN)
+
 async def hourly_sender(bot_session):
     while True:
         delay = await get_delay()
@@ -329,6 +332,9 @@ async def handle_moderate_posts(message: Message, state: FSMContext, bot: Bot):
 
         post = await get_next_global_post(start_channel_id)
 
+    if post is None:
+        await message.answer("Ошибка: невозможно получить следующий пост")
+        return
 
     file_id, file, tags, post_channel_id = post
 
@@ -824,7 +830,9 @@ async def command_setdelay_handler(message: Message, state: FSMContext):
 
 
 @router.message(AddDelay.channel_id, F.text)
-async def process_setdelay(message: Message, state: FSMContext):
+async def process_setdelay(message: Message, state: FSMContext, bot: Bot):
+    global sender_task, bot_session
+
     if message.from_user.id not in ALLOWED_IDS:
         return
 
@@ -836,9 +844,20 @@ async def process_setdelay(message: Message, state: FSMContext):
 
     try:
         await requests_db.set_delay(delay)
-        await message.answer("Задержка успешно изменена.")
+
+        if sender_task:
+            sender_task.cancel()
+
+            try:
+                await sender_task
+            except asyncio.CancelledError:
+                pass
+
+        sender_task = asyncio.create_task(hourly_sender(bot_session))
+
+        await message.answer("Задержка успешно изменена")
     except Exception as e:
-        await message.answer("Ошибка при изменении задержки.")
+        await message.answer("Ошибка при изменении задержки")
 
     await state.clear()
 
@@ -880,12 +899,11 @@ async def remove_channel_selected(callback: CallbackQuery):
         await callback.message.edit_text("Ошибка при удалении")
         print("Ошибка при удалении канала:", e)
 
-
 # Run the bot
 async def main() -> None:
-    bot_session = Bot(token=TOKEN)
+    global sender_task, bot_session
     await init_db()
-    asyncio.create_task(hourly_sender(bot_session))
+    sender_task = asyncio.create_task(hourly_sender(bot_session))
     await create_session()
 
     try:
