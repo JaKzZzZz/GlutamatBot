@@ -36,9 +36,10 @@ dp.include_router(router)
 loading_lock = asyncio.Lock()
 
 async def hourly_sender(bot_session):
-    delay = await get_delay()
-    sec_delay = delay * 60
     while True:
+        delay = await get_delay()
+        sec_delay = delay * 60
+
         await asyncio.sleep(sec_delay + random.randint(0, sec_delay // 4))
 
         status = await requests_db.get_bot_status()
@@ -302,7 +303,7 @@ async def handle_moderate_posts(message: Message, state: FSMContext, bot: Bot):
 
     if not post:
 
-        await message.answer("Очередь закончилась")
+        await message.answer("Очередь закончилась. Загрузка...")
 
         channels = await get_channels()
         results = []
@@ -325,6 +326,8 @@ async def handle_moderate_posts(message: Message, state: FSMContext, bot: Bot):
 
         await message.answer(
             "Загрузка завершена.\n\n" + "\n".join(results))
+
+        post = await get_next_global_post(start_channel_id)
 
 
     file_id, file, tags, post_channel_id = post
