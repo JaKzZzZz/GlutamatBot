@@ -274,6 +274,7 @@ async def get_all_query_posts(channel_id):
             SELECT q.file_id, n.file, n.tags, n.artist_name
             FROM query q
             JOIN nonfilter n ON q.file_id = n.file_id
+            AND q.channel_id = n.channel_id
             WHERE q.channel_id = ?
         """, (channel_id,))
         return await cursor.fetchall()

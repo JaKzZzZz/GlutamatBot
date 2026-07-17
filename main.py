@@ -36,7 +36,7 @@ dp.include_router(router)
 loading_lock = asyncio.Lock()
 
 sender_task: asyncio.Task | None = None
-bot_session = Bot(token=TOKEN)
+global_bot_session = Bot(token=TOKEN)
 
 async def hourly_sender(bot_session):
     while True:
@@ -90,15 +90,16 @@ async def send_message(bot_session, channel_id, file_id, file, artist_name):
 
     await bot_session.send_photo(chat_id=channel_id, photo=file, caption=caption, parse_mode="HTML")
 
-    sleep_delay = random.randint(10, 30)
-
-    await asyncio.sleep(sleep_delay)
-
     try:
         await requests_db.delete_query_post(file_id)
 
     except Exception as e:
         print(f"Ошибка удаления арта из БД: {e}")
+
+    sleep_delay = random.randint(10, 30)
+
+    await asyncio.sleep(sleep_delay)
+
 
 async def get_next_global_post(current_channel_id):
     start = current_channel_id
@@ -831,7 +832,7 @@ async def command_setdelay_handler(message: Message, state: FSMContext):
 
 @router.message(AddDelay.channel_id, F.text)
 async def process_setdelay(message: Message, state: FSMContext, bot: Bot):
-    global sender_task, bot_session
+    global sender_task, global_bot_session
 
     if message.from_user.id not in ALLOWED_IDS:
         return
@@ -853,7 +854,7 @@ async def process_setdelay(message: Message, state: FSMContext, bot: Bot):
             except asyncio.CancelledError:
                 pass
 
-        sender_task = asyncio.create_task(hourly_sender(bot_session))
+        sender_task = asyncio.create_task(hourly_sender(global_bot_session))
 
         await message.answer("Задержка успешно изменена")
     except Exception as e:
@@ -901,15 +902,15 @@ async def remove_channel_selected(callback: CallbackQuery):
 
 # Run the bot
 async def main() -> None:
-    global sender_task, bot_session
+    global sender_task, global_bot_session
     await init_db()
-    sender_task = asyncio.create_task(hourly_sender(bot_session))
+    sender_task = asyncio.create_task(hourly_sender(global_bot_session))
     await create_session()
 
     try:
-        await dp.start_polling(bot_session)
+        await dp.start_polling(global_bot_session)
     finally:
-        await bot_session.session.close()
+        await global_bot_session.session.close()
         await close_session()
 
 
