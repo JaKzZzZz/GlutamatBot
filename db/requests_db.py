@@ -212,8 +212,22 @@ async def get_next_post(channel_id):
         ORDER BY file_id
         LIMIT 1 
     """, (channel_id,))
-        result_post = await result.fetchone()
-        return result_post
+        row = await result.fetchone()
+
+        if row is None:
+            return None
+
+        file_id, file, tags, row_channel_id = row
+        await db.execute("""
+        UPDATE nonfilter
+    SET status = 'processing',
+        processing_at = CURRENT_TIMESTAMP
+    WHERE file_id = ? AND channel_id = ?
+        """, (file_id, row_channel_id))
+
+        await db.commit()
+
+        return row
 
 async def get_next_channel(current_channel_id):
     async with aiosqlite.connect(DB_NAME) as db:

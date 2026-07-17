@@ -33,6 +33,8 @@ dp = Dispatcher()
 router = Router()
 dp.include_router(router)
 
+loading_lock = asyncio.Lock()
+
 async def hourly_sender(bot_session):
     delay = await get_delay()
     sec_delay = delay * 60
@@ -538,34 +540,41 @@ async def handle_moderation(callback: CallbackQuery, bot: Bot):
 
     if not post:
 
-        await callback.answer("Очередь закончилась. Загрузка...")
+        async with loading_lock:
 
-        channels = await get_channels()
+            post = await get_next_global_post(start_channel_id)
 
-        for channel_name, channel_id in channels:
+            if not post:
 
-            try:
-                loaded_count = await functions_db.fetch_and_save_posts(channel_id)
+                await callback.answer("Очередь закончилась. Загрузка...")
 
-                if loaded_count == 0:
-                    await callback.answer("По этим тегам ничего не найдено")
-                    return
+                channels = await get_channels()
 
-                posts_count = await requests_db.get_posts_count(channel_id)
-                await callback.answer(
-                    f"Успешная загрузка данных")
+                for channel_name, channel_id in channels:
+
+                    try:
+                        loaded_count = await functions_db.fetch_and_save_posts(channel_id)
+
+                        if loaded_count == 0:
+                            await callback.answer("По этим тегам ничего не найдено")
+                            return
+
+                        await callback.answer(
+                            f"Успешная загрузка данных")
 
 
-            except Exception as e:
-                await callback.answer("Возникла ошибка при загрузке данных. Возможно, не заданы тэги?")
-                print(e)
-                return
+                    except Exception as e:
+                        await callback.answer("Возникла ошибка при загрузке данных. Возможно, не заданы тэги?")
+                        print(e)
+                        return
 
-        post = await get_next_global_post(start_channel_id)
+                post = await get_next_global_post(start_channel_id)
+
+        if not post:
+            await callback.answer("Во всех каналах новых постов нет")
+            return
 
     new_query_id, file, tags, post_channel_id = post
-
-    print(post_channel_id)
 
     chat = await bot.get_chat(post_channel_id)
     title = chat.title

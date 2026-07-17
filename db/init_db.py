@@ -13,6 +13,7 @@ async def init_db():
         tags VARCHAR(1024) NOT NULL,
         status TEXT DEFAULT 'pending', -- pending / sent 
         channel_id VARCHAR(255),
+        processing_at TIMESTAMP DEFAULT NULL,
         UNIQUE (file_id, channel_id)
         );
         CREATE TABLE IF NOT EXISTS query (
