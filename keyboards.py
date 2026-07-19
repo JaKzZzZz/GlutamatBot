@@ -72,7 +72,7 @@ def confirm_keyboard(action: str, channel_id: str):
     )
 
 
-def queue_keyboard(index: int, total: int, file_id: int):
+def queue_keyboard(index: int, total: int, file_id: int, channel_id: str):
     buttons = []
 
     if index > 0:
@@ -89,7 +89,7 @@ def queue_keyboard(index: int, total: int, file_id: int):
 
     buttons.append(InlineKeyboardButton(
         text="🗑",
-        callback_data=f"queue:delete:{file_id}"
+        callback_data=f"queue:delete:{file_id}:{channel_id}"
     ))
 
     return InlineKeyboardMarkup(inline_keyboard=[buttons])

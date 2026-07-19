@@ -96,7 +96,7 @@ async def send_message(bot_session, channel_id, file_id, file, artist_name):
     except Exception as e:
         print(f"Ошибка удаления арта из БД: {e}")
 
-    sleep_delay = random.randint(10, 30)
+    sleep_delay = random.randint(2, 30)
 
     await asyncio.sleep(sleep_delay)
 
@@ -147,6 +147,7 @@ def tags_to_query(tags) -> str:
 
 @router.message(F.text.lower() == "стоп/старт")
 async def command_pause_handler(message: Message) -> None:
+    global sender_task
     if message.from_user.id not in ALLOWED_IDS:
         return
     status = await requests_db.get_bot_status()
@@ -166,6 +167,19 @@ async def command_pause_handler(message: Message) -> None:
 
         except Exception as e:
             print(e)
+
+    try:
+        if sender_task:
+            sender_task.cancel()
+
+            try:
+                await sender_task
+            except asyncio.CancelledError:
+                pass
+
+        sender_task = asyncio.create_task(hourly_sender(global_bot_session))
+    except Exception as e:
+        await message.answer("Ошибка при изменении статуса бота")
 
 @router.message(PostActionChoose.choosing_action,
                 F.text.lower() == "вкл/выкл рассылку")
@@ -426,7 +440,8 @@ async def start_queue_view(message: Message, state: FSMContext):
     try:
         await state.update_data(
             queue=posts,
-            index=0
+            index=0,
+            channel_id=channel_id,
         )
         await show_queue_post(message, state)
 
@@ -439,6 +454,7 @@ async def show_queue_post(message: Message, state: FSMContext):
 
     posts = data.get("queue")
     index = data.get("index", 0)
+    channel_id = data.get("channel_id")
 
     if not posts:
         await message.answer("Очередь пуста")
@@ -454,7 +470,7 @@ async def show_queue_post(message: Message, state: FSMContext):
         await message.answer_photo(
             photo=file,
             caption=f"{index + 1}/{len(posts)}\n\n{caption}",
-            reply_markup=keyboards.queue_keyboard(index, len(posts), file_id)
+            reply_markup=keyboards.queue_keyboard(index, len(posts), file_id, channel_id)
         )
     except Exception as e:
         print(e)
@@ -466,6 +482,7 @@ async def navigate_queue(callback: CallbackQuery, state: FSMContext):
 
     posts = data.get("queue")
     index = data.get("index", 0)
+    channel_id = data.get("channel_id")
 
     if callback.data == "queue:next":
         index += 1
@@ -488,7 +505,7 @@ async def navigate_queue(callback: CallbackQuery, state: FSMContext):
                 media=file,
                 caption=f"{index + 1}/{len(posts)}\n\n{caption}"
             ),
-            reply_markup=keyboards.queue_keyboard(index, len(posts), file_id)
+            reply_markup=keyboards.queue_keyboard(index, len(posts), file_id, channel_id)
         )
     except TelegramBadRequest:
         pass
@@ -499,6 +516,7 @@ async def navigate_queue(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("queue:delete:"))
 async def delete_from_queue(callback: CallbackQuery, state: FSMContext):
     file_id = callback.data.split(":")[2]
+    channel_id = callback.data.split(":")[3]
 
     try:
         await requests_db.delete_query_post(file_id)
@@ -508,10 +526,7 @@ async def delete_from_queue(callback: CallbackQuery, state: FSMContext):
         print(e)
         await callback.message.answer("Ошибка удаления арта из очереди в БД")
 
-    data = await state.get_data()
-    posts = data.get("queue")
-
-    posts = [p for p in posts if p[0] != int(file_id)]
+    posts = await requests_db.get_all_query_posts(channel_id)
 
     if not posts:
         await callback.message.edit_caption("Очередь пуста")
@@ -519,11 +534,13 @@ async def delete_from_queue(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Удалено")
         return
 
-    await callback.message.bot.delete_message(
-        chat_id=callback.message.chat.id,
-        message_id=callback.message.message_id
+    await state.update_data(
+        queue=posts,
+        index=0,
+        channel_id=channel_id
     )
-    await start_queue_view(callback.message, state)
+    await callback.message.delete()
+    await show_queue_post(callback.message, state)
 
 
 @router.callback_query(F.data.startswith(("approve:", "reject:")))
